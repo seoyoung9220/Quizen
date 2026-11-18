@@ -191,13 +191,18 @@ def test_verify_short_and_essay():
                       evidence_pages=[19], evidence_mode="full", source_document="x", chunk_id=1,
                       qtype="short", answer_text="에포크", accepted=["epoch"])
     orig = vf.solve_short
+    vsr = lambda **k: VerifyShortResult(**{"premise_check": "", "premise_ok": True, "reason": "", **k})  # noqa: E731
     try:
-        vf.solve_short = lambda *a, **k: VerifyShortResult(answer="Epoch", ambiguous=False, reason="")
+        vf.solve_short = lambda *a, **k: vsr(answer="Epoch", ambiguous=False)
         assert vf.verify_question(q, CHUNK["text"])[0]
-        vf.solve_short = lambda *a, **k: VerifyShortResult(answer="반복", ambiguous=False, reason="")
+        vf.solve_short = lambda *a, **k: vsr(answer="반복", ambiguous=False)
         assert not vf.verify_question(q, CHUNK["text"])[0]
-        vf.solve_short = lambda *a, **k: VerifyShortResult(answer="에포크", ambiguous=True, reason="")
+        vf.solve_short = lambda *a, **k: vsr(answer="에포크", ambiguous=True)
         assert not vf.verify_question(q, CHUNK["text"])[0]
+        # [추가] 전제가 자료와 맞지 않으면 답이 맞아도 버린다
+        vf.solve_short = lambda *a, **k: vsr(answer="에포크", ambiguous=False, premise_ok=False, premise_check="모순")
+        ok, why = vf.verify_question(q, CHUNK["text"])
+        assert not ok and "전제" in why, why
     finally:
         vf.solve_short = orig
     assert vf.verify_question(ValidQuestion(**{**q.to_dict(), "qtype": "essay"}), CHUNK["text"])[0]
@@ -357,7 +362,8 @@ def test_build_mixed():
                                              answer_index=0, difficulty="중", evidence=ev))
             elif qtype == "short":
                 word = next(w for w in ev.split() if len(w) >= 2)
-                out.append(GeneratedShort(question=f"S{len(seen)}-{k} {ev[:15]}", answer=word, difficulty="중", evidence=ev))
+                out.append(GeneratedShort(question=f"S{len(seen)}-{k} {ev.replace(word, '')[:15]}", answer=word,
+                                          difficulty="중", evidence=ev))
             else:
                 out.append(GeneratedEssay(question=f"E{len(seen)}-{k} {ev[:15]}", model_answer=ev, difficulty="중", evidence=ev,
                                           rubric=[RubricItem(point="a", evidence=ev), RubricItem(point="b", evidence=ev)]))
@@ -373,6 +379,77 @@ def test_build_mixed():
     assert rep.requested == 5 and rep.produced == 5
     assert [t for t, _ in seen][:1] == ["mcq"] and seen[-1][0] == "essay"
     assert {pc["qtype"] for pc in rep.per_chunk} == {"mcq", "short", "essay"}
+
+
+def test_hard_short_shortfall_becomes_mcq():
+    """사용자 결정(2026-11-18): '상' 단답이 모자라면 모자란 수만큼 객관식으로 채운다. '중'은 채우지 않는다."""
+    def fake(chunk_text, difficulty, num, existing, stats, model=None, conditions="", qtype="mcq", **kw):
+        lines = [l for l in chunk_text.splitlines() if len(l) > 25 and "[[PAGE" not in l]
+        k0 = len(existing)
+        if qtype == "short":
+            return []                                    # '상황 → 현상 이름' 재료가 없다고 가정
+        return [GeneratedQuestion(question=f"M{k0}-{k} {lines[(k0 + k) % len(lines)][:15]}",
+                                  choices=[f"{lines[(k0 + k) % len(lines)][:6]}{c}{k}" for c in "가나다라"],
+                                  answer_index=0, difficulty=difficulty, evidence=lines[(k0 + k) % len(lines)])
+                for k in range(num)]
+
+    orig = pl.generate_for_chunk
+    pl.generate_for_chunk = fake
+    try:
+        qs, rep = pl.build_mixed(EXT, {"mcq": 2, "short": 2}, "상", rng=random.Random(3))
+        qs2, rep2 = pl.build_mixed(EXT, {"mcq": 2, "short": 2}, "중", rng=random.Random(3))
+    finally:
+        pl.generate_for_chunk = orig
+    assert rep.short_to_mcq == 2 and [q.qtype for q in qs] == ["mcq"] * 4 and rep.produced == 4, (rep.short_to_mcq, len(qs))
+    assert rep2.short_to_mcq == 0 and rep2.produced == 2
+
+
+def test_hard_short_copied_question_rejected():
+    """실측(2026-11-18): '상' 단답이 자료 문장을 옮겨 놓고 이름만 물음 → 버림. 상황형은 통과. '중'에는 적용 안 함."""
+    from quizen.validate import copied_ratio
+    ev = ("미니배치 경사 하강법이 확률적 경사 하강법보다 최소값에 더 가까이 도달할 수 있으나, "
+          "한편으로는 지역 최소값에서 빠져나오기가 더 힘들 수 있음")
+    copied = "확률적 경사 하강법보다 최소값에 더 가까이 도달할 수 있으나 지역 최소값에서 빠져나오기가 더 힘든 방법은?"
+    situ = "GPU로 학습을 빠르게 하려고 한 번에 수십 개씩 샘플을 묶어 기울기를 계산했더니 SGD보다 덜 출렁였다. 이 방식은?"
+    assert copied_ratio(copied, ev) >= 0.15 and copied_ratio(situ, ev) < 0.15
+    chunk = ChunkIndex("[[PAGE 26]]\n" + ev)
+    mk = lambda qq: GeneratedShort(question=qq, answer="미니배치 경사 하강법", difficulty="상", evidence=ev)  # noqa: E731
+    bad, why = validate(mk(copied), chunk, "x", 1, difficulty="상")
+    assert bad is None and "옮겨" in why, why
+    ok, why = validate(mk(situ), chunk, "x", 1, difficulty="상")
+    assert ok, why
+    ok2, why2 = validate(mk(copied), chunk, "x", 1, difficulty="중")
+    assert ok2, why2
+
+
+def test_same_slide_scenario_is_duplicate():
+    """실측(2026-11-18): 같은 슬라이드로 '특성 스케일 차이 → 스케일링'을 두 번 냄 → 중복. 다른 개념 쌍은 통과."""
+    from quizen.dedup import duplicate_reason
+    ev4 = ("특성 1이 특성 2보다 '훨씬 작은 스케일'을 가진 훈련셋에 대한 경사 하강법 •처음엔 최소값의 방향에 거의 직각으로 "
+           "향하다가 평편한 골짜기를 돌아 나감 •결국 최소값에 도달하나 수렴하는데 시간이 오래 걸림 •경사 하강법 사용 시 반드시 "
+           "모든 특성이 '같은 스케일' 을 갖도록 해야 함 • 예, 사이킷런의 StandardScaler")
+    ev5 = ("• 특성 스케일링 (feature scaling)과 경사 하강법 ● 선형 회귀의 비용 함수는 그릇 모양 (shape of a bowl) ● 특성들의 "
+           "'스케일이 매우 다르면' 길쭉한 모양 그릇이 될 수 있음 ● 경사 하강법 알고리즘이 최소값에 도달하는데 '긴 시간'이 걸릴 수 "
+           "있음 ● 경사 하강법 사용 시 반드시 모든 특성이 '같은 스케일' 을 갖도록 해야 함 • 예, 사이킷런의 StandardScaler")
+    q4 = ("한 연구자가 선형 회귀 모델을 경사 하강법으로 학습 중이었는데, 모델 파라미터 1의 스케일이 파라미터 2보다 훨씬 작다는 것을 "
+          "확인했다. 현재 경사 하강법의 수렴 경로를 관찰한 결과, 초기에는 최소값 방향에 거의 직각으로 이동하다가 이후 평편한 골짜기를 "
+          "따라 느리게 이동하며 최소값 도달에 오랜 시간이 걸리는 현상이 나타났다. 이 문제를 해결하여 수렴 속도를 개선하기 위해 취해야 "
+          "할 가장 적절한 조치는 무엇인가?")
+    q5 = ("선형 회귀 모델을 경사 하강법으로 학습하는 과정에서, 특성 1의 스케일이 특성 2보다 훨씬 작은 훈련셋을 사용하였다. 경사 하강법의 "
+          "수렴 경로를 관찰한 결과, 알고리즘은 처음에 최소값의 방향에 거의 직각으로 향하다가 이후 평편한 골짜기를 따라 이동하며 최소값에 "
+          "도달하는 데 오랜 시간이 걸리는 현상이 관찰되었다. 이 현상을 방지하고 수렴 속도를 개선하기 위해 취해야 할 가장 적절한 조치는 무엇인가?")
+    prev = [{"question": q4, "choices": ["a", "b", "c", "d"], "evidence": ev4}]
+    assert duplicate_reason(q5, ["e", "f", "g", "h"], ev5, prev).startswith("질문·근거 겹침")
+    # 근거만 겹치고(공통 문장) 질문이 다른 쌍은 통과 (실측: 정규 방정식 vs 로지스틱 회귀, 근거 겹침 0.40)
+    other = "로지스틱 회귀 모델의 비용 함수를 최소화하는 파라미터를 찾기 위해 쓰는 최적화 기법은?"
+    assert duplicate_reason(other, [], ev5, prev) == ""
+
+
+def test_short_question_must_not_contain_answer():
+    """실측: 질문에 정답('Virginica')이 그대로 들어 있던 단답 → 버림."""
+    bad, why = validate(GeneratedShort(question="훈련셋을 한 번 반복하는 단위인 에포크는 영어로?", answer="에포크",
+                                       difficulty="상", evidence=EV), IDX, "x", 1)
+    assert bad is None and "질문에 정답" in why, why
 
 
 # ------------------------------------------------------------------ 오답 풀이 메시지

@@ -104,7 +104,11 @@ def batch_schema(n: int, qtype: str = "mcq") -> dict:
 
 
 # ---------------------------------------------------------------- 검증·채점 응답
+# [추가] premise_ok: 문제의 상황·전제가 자료와 맞는지 먼저 판단하게 한다 (맨 앞 칸 → 답을 고르기 전에 생각함).
+# 지시문 한 줄로는 걸러지지 않았다 (실측 2026-11-18: '선형 회귀 GD가 지역 최소값에 빠졌다' 같은 모순 전제 통과).
 class VerifyResult(BaseModel):
+    premise_check: str                 # 전제가 자료와 맞는지 한 줄 판단
+    premise_ok: bool
     selected_index: int = Field(ge=0, le=3)
     ambiguous: bool
     reason: str
@@ -112,6 +116,8 @@ class VerifyResult(BaseModel):
 
 class VerifyShortResult(BaseModel):
     """단답형 정답 숨김 풀이: 모델이 직접 쓴 답."""
+    premise_check: str
+    premise_ok: bool
     answer: str
     ambiguous: bool
     reason: str

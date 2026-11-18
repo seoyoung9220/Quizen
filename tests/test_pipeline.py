@@ -94,9 +94,13 @@ def test_time_budget_stops_generation():
 
 
 def test_hard_gets_longer_output():
-    from quizen.generate import num_predict_for
+    from quizen.generate import num_predict_for, output_budget
     assert num_predict_for("mcq", 5, "상") > num_predict_for("mcq", 5, "중") == 2300
-    assert num_predict_for("mcq", 6, "상") + 4000 <= 8192          # 자료+지시(약 4천 토큰)와 함께 컨텍스트에 들어감
+    assert output_budget("mcq", 2, "상", 4000) == num_predict_for("mcq", 2, "상") == 1900     # 자리 넉넉: 2배 그대로
+    b = output_budget("mcq", 6, "상", 4000)                       # 자료+지시 약 4천 토큰: 남은 자리까지만
+    assert b + 4000 <= 8192 and b >= num_predict_for("mcq", 6, "상", factor=1.5), b
+    assert output_budget("mcq", 6, "상", 6000) == num_predict_for("mcq", 6, "상", factor=1.5)  # 자리 부족: 예전 값 보장
+    assert output_budget("mcq", 3, "중", 4000) == num_predict_for("mcq", 3, "중")              # '중'은 그대로
 
 
 if __name__ == "__main__":

@@ -317,12 +317,18 @@ def view_new() -> None:
                "counts": counts},
         gen_seconds=time.time() - t0,
         report={"discarded": dict(rep.discarded), "samples": rep.discard_samples[:20],
-                "fallback_chunks": rep.fallback_chunks})
+                "fallback_chunks": rep.fallback_chunks, "short_to_mcq": rep.short_to_mcq})
     history.record(qs, rep.chunks_used)          # 다음 회차에서 구간 돌려쓰기에 사용
+    notes = []
+    if rep.short_to_mcq:
+        notes.append(f"'상' 단답형으로 낼 만한 상황(현상 이름을 묻는 문제)이 부족해 {rep.short_to_mcq}문제는 객관식으로 냈습니다.")
     if rep.produced < rep.requested:
         why = (" 시간이 너무 오래 걸려 생성을 멈췄습니다. 범위를 넓히거나 난이도를 바꿔 보세요."
                if rep.timed_out else "")
-        ss.flash = ("info", f"요청 {rep.requested}문제 중 검증을 통과한 {rep.produced}문제만 출제되었습니다.{why}")
+        notes.append(f"요청 {rep.requested}문제 중 검증을 통과한 {rep.produced}문제만 출제되었습니다.{why}")
+    if notes:
+        before = [ss.flash[1]] if ss.flash else []      # 'PDF가 이미 등록됨' 안내가 있으면 함께 보여 줌
+        ss.flash = ("info", " ".join(before + notes))
     go_quiz(quiz_id)
     st.rerun()
 
@@ -570,6 +576,8 @@ def quiz_info(quiz) -> None:
         if quiz["conditions"]:
             lines.append(f"- 추가 조건: {quiz['conditions']}")
         lines.append(f"- 모델: `{quiz['model']}`")
+        if report.get("short_to_mcq"):
+            lines.append(f"- '상' 단답형 {report['short_to_mcq']}문제는 알맞은 상황이 없어 객관식으로 대신 출제")
         discarded = report.get("discarded") or {}
         if discarded:
             lines.append("- 검증에서 버린 문제: " + ", ".join(f"{k} {v}개" for k, v in discarded.items()))

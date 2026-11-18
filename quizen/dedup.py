@@ -5,6 +5,9 @@
    60% 이상 겹침 (단어 단위라서 '배치'와 '미니배치'는 다른 단어로 본다)
 2. 같은 근거: 근거 문장이 거의 같거나(유사도 ≥ 0.85) 한쪽이 다른 쪽을 포함 (짧은 근거는 제외)
 3. 보기 구성이 비슷함: 보기 4개를 정렬해 이어 붙인 문자열의 유사도 ≥ 0.80
+5. [추가] 질문·근거가 함께 겹침: 질문 단어 겹침 ≥ 0.30 이면서 근거 문장의 30% 이상(10자 이상 덩어리)이 겹침
+   (실측 2026-11-18: 같은 슬라이드로 '특성 스케일 차이 → 스케일링'을 두 번 냄. 근거 범위가 조금 달라 2번에 안 걸림.
+    오늘 측정 문제 쌍 전체에 대 보니 이 조건에 걸리는 쌍은 진짜 중복 2쌍뿐이었다)
 예) "에포크의 정의는?" vs "에포크(epoch)의 정의로 옳은 것은?" → 1번으로 중복
 """
 import re
@@ -14,6 +17,9 @@ Q_SIM = 0.60
 EV_SIM = 0.85
 CH_SIM = 0.80
 EV_MIN_CONTAIN = 20   # 이보다 짧은 근거는 '포함' 판정에 쓰지 않는다
+PAIR_Q_SIM = 0.30     # 5번 규칙: 질문 단어 겹침
+PAIR_EV_SHARE = 0.30  # 5번 규칙: 짧은 쪽 근거 중 겹치는 비율
+SHARE_BLOCK = 10
 
 _DROP = re.compile(r"[\s\W_]+", re.UNICODE)
 _PAREN = re.compile(r"\([^)]*\)")
@@ -63,6 +69,14 @@ def _ratio(a: str, b: str) -> float:
     return m.ratio()
 
 
+def _shared(a: str, b: str) -> float:
+    """짧은 쪽 문자열 가운데 SHARE_BLOCK자 이상 덩어리로 상대와 겹치는 글자의 비율."""
+    if not a or not b:
+        return 0.0
+    blocks = SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks()
+    return sum(m.size for m in blocks if m.size >= SHARE_BLOCK) / min(len(a), len(b))
+
+
 def duplicate_reason(question: str, choices, evidence: str, previous: list[dict], answer: str = "") -> str:
     """previous: [{"question", "choices", "evidence", "answer"(단답 정답, 없을 수 있음)}].
     중복이면 사유, 아니면 빈 문자열.
@@ -74,9 +88,12 @@ def duplicate_reason(question: str, choices, evidence: str, previous: list[dict]
     for p in previous:
         if ans and _n(p.get("answer") or "") == ans:
             return f"같은 정답({answer}): {p['question'][:30]}"
-        if _jaccard(q, _nq(p["question"])) >= Q_SIM:
+        jq = _jaccard(q, _nq(p["question"]))
+        if jq >= Q_SIM:
             return f"질문 유사: {p['question'][:30]}"
         pev = _n(p["evidence"])
+        if jq >= PAIR_Q_SIM and _shared(ev, pev) >= PAIR_EV_SHARE:
+            return f"질문·근거 겹침: {p['question'][:30]}"
         if _ratio(ev, pev) >= EV_SIM or (min(len(ev), len(pev)) >= EV_MIN_CONTAIN and (ev in pev or pev in ev)):
             return f"같은 근거: {p['question'][:30]}"
         if _ratio(ch, _n("".join(sorted(p["choices"])))) >= CH_SIM:

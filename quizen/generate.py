@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pydantic import ValidationError
 
 from . import config, prompts
-from .llm import ContextOverflow, client, fit_context
+from .llm import ContextOverflow, client, fit_context, prompt_tokens
 from .schemas import BATCH_MODELS, GeneratedBatch, GeneratedQuestion, batch_schema
 
 MAX_PER_CHUNK = 6          # 한 번에 너무 많이 시키면 품질이 떨어지고 같은 개념을 반복하기 쉽다
@@ -147,14 +147,27 @@ NUM_PREDICT = {"mcq": (400, 300), "short": (250, 200), "essay": (700, 300)}
 
 
 # '상' 문제는 지문·보기가 길다. C-9 실측에서 '상' 출력이 한도에서 잘려 JSON이 4/16번 깨졌다.
-HARD_FACTOR = 1.5
+# [변경] 1.5 → 2.0: 새 '상' 기준(상황 제시형)은 지문이 더 길어 1.5배에서도 22번 중 2번 잘림 (2026-11-18 실측).
+#        단, 컨텍스트에 남은 자리까지만 쓴다 (output_budget). 자리가 모자라도 예전 값(1.5배)은 보장한다.
+HARD_FACTOR = 2.0
+HARD_FLOOR_FACTOR = 1.5
+CTX_MARGIN = 32
 
 
-def num_predict_for(qtype: str, num: int, difficulty: str = "중") -> int:
+def num_predict_for(qtype: str, num: int, difficulty: str = "중", factor: float | None = None) -> int:
     per, base = NUM_PREDICT[qtype]
     if difficulty == "상":
-        per = int(per * HARD_FACTOR)
+        per = int(per * (HARD_FACTOR if factor is None else factor))
     return per * num + base
+
+
+def output_budget(qtype: str, num: int, difficulty: str, prompt_n: int) -> int:
+    """출력 한도: 원하는 값과 컨텍스트에 남은 자리 중 작은 쪽. 단 '상'의 예전 한도(1.5배)보다 작게는 줄이지 않는다
+    (그만큼도 안 들어가면 build_fitting_messages가 '이미 출제된 문제' 목록을 줄여 자리를 만든다)."""
+    want = num_predict_for(qtype, num, difficulty)
+    floor = min(want, num_predict_for(qtype, num, difficulty, factor=HARD_FLOOR_FACTOR))
+    room = config.NUM_CTX - prompt_n - CTX_MARGIN
+    return max(min(want, room), floor)
 
 
 def build_fitting_messages(chunk_text: str, difficulty: str, num: int, existing: list[str],
@@ -176,7 +189,9 @@ def generate_for_chunk(chunk_text: str, difficulty: str, num: int,
                        existing: list[str], stats: GenStats,
                        model: str | None = None, conditions: str = "", qtype: str = "mcq") -> list:
     """청크 하나에서 num개 이하의 문제를 만든다 (qtype: mcq|short|essay). 구조 검증에 실패하면 최대 2회 다시 요청한다."""
-    num_predict = num_predict_for(qtype, num, difficulty)
+    probe = prompts.build_gen_messages(chunk_text, difficulty, num, _existing_block(existing[-EXISTING_MAX:]),
+                                       conditions, qtype)
+    num_predict = output_budget(qtype, num, difficulty, prompt_tokens(probe))
     messages = build_fitting_messages(chunk_text, difficulty, num, existing, conditions, num_predict, qtype)
     batch_model = BATCH_MODELS[qtype]
     for attempt in range(PARSE_RETRIES + 1):

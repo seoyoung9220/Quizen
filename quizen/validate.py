@@ -270,6 +270,23 @@ _BROKEN_FORMULA = re.compile(rf"[{_M}]\s*[=&*^+/]|[=&*^/]\s*[{_M}]")
 FORMULA_WORDS = ("행렬", "전치", "수식", "공식", "계산식")   # '식은'은 '방정식은'에도 걸려서 넣지 않음
 
 
+# '상' 단답형이 자료 문장을 옮겨 놓고 이름만 묻는지: 질문 가운데 근거를 그대로 베낀 글자(6자 이상 덩어리)의 비율.
+# 2026-11-18 실측 16문제로 정함: 상황형(언더피팅) 0.13 / 정의형 0.18~0.64. 괄호 속 영문 표기는 빼고 잰다.
+# 객관식은 질문이 짧고 베낀 부분이 보기에 있어 이 비율로 갈리지 않았다 (적용하지 않음).
+COPY_BLOCK = 6
+HARD_SHORT_COPY_MAX = 0.15
+
+
+def copied_ratio(question: str, evidence: str) -> float:
+    from difflib import SequenceMatcher
+    a = answer_norm(re.sub(r"\([^)]*\)", "", question))
+    b = answer_norm(re.sub(r"\([^)]*\)", "", evidence))
+    if not a:
+        return 0.0
+    blocks = SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks()
+    return sum(m.size for m in blocks if m.size >= COPY_BLOCK) / len(a)
+
+
 def leans_on_broken_formula(evidence: str, asked: str) -> bool:
     return bool(_BROKEN_FORMULA.search(evidence)) and any(w in asked for w in FORMULA_WORDS)
 
@@ -305,7 +322,7 @@ def is_partial_range(answer: str, evidence: str) -> bool:
 
 
 def validate(q, index: ChunkIndex, source_document: str,
-             chunk_id: int) -> tuple[ValidQuestion | None, str]:
+             chunk_id: int, difficulty: str | None = None) -> tuple[ValidQuestion | None, str]:
     """모델이 만든 문제를 코드로 검증한다. 유형별 추가 검사:
     - 단답형: 정답이 근거 문장 안에 글자 그대로 있어야 한다. 인정 답안은 자료에 나오는 표기만 남긴다.
     - 서술형: 채점 기준마다 근거가 원문에 있어야 한다 (하나라도 없으면 폐기)."""
@@ -337,6 +354,15 @@ def validate(q, index: ChunkIndex, source_document: str,
         norms = [answer_norm(x) for x in items]
         if len(set(norms)) != len(norms):
             return None, f"단답 항목이 겹침: {q.answer}"
+        # 질문에 정답 용어가 그대로 들어 있으면 답을 알려 주는 셈이다 (실측: '…Virginica를 이진 분류… 어떤 클래스?' → Virginica)
+        q_norm = answer_norm(q.question)
+        leak = next((x for x, n in zip(items, norms) if len(n) >= 2 and n in q_norm), None)
+        if leak:
+            return None, f"질문에 정답이 들어 있음: {leak}"
+        if difficulty == "상":
+            cr = copied_ratio(q.question, q.evidence)
+            if cr >= HARD_SHORT_COPY_MAX:
+                return None, f"'상' 단답이 자료 문장을 옮겨 이름만 물음 (베낀 비율 {cr:.0%})"
         ev_norm = answer_norm(q.evidence)
         for x, n in zip(items, norms):
             if len(n) < 1 or n not in ev_norm:

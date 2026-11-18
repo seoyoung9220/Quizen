@@ -149,6 +149,8 @@ def verify_question(q: ValidQuestion, chunk_text: str) -> tuple[bool, str]:
         res = solve_short(q.question, chunk_text)
         if res is None:
             return False, "검증 응답 형식 오류"
+        if not res.premise_ok:
+            return False, f"전제가 자료와 맞지 않음: {res.premise_check}"
         if res.ambiguous:
             return False, f"모호함: {res.reason}"
         if not short_matches(res.answer, q.answer_text, q.accepted, allow_contain=True, evidence=q.evidence):
@@ -157,6 +159,8 @@ def verify_question(q: ValidQuestion, chunk_text: str) -> tuple[bool, str]:
     res = solve(q.question, q.choices, chunk_text)
     if res is None:
         return False, "검증 응답 형식 오류"
+    if not res.premise_ok:
+        return False, f"전제가 자료와 맞지 않음: {res.premise_check}"
     if res.ambiguous:
         return False, f"모호함: {res.reason}"
     if res.selected_index != q.answer_index:

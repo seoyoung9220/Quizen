@@ -48,6 +48,7 @@ class BuildReport:
     chunks_used: list[dict] = field(default_factory=list)   # 문제가 1개 이상 나온 청크 (이력 기록용)
     fallback_chunks: int = 0                                 # 부족분 보충에 쓴 구간 수
     timed_out: bool = False                                  # 시간 상한에 걸려 생성을 멈췄는지
+    short_to_mcq: int = 0                                    # '상' 단답이 모자라 객관식으로 대신 낸 수
 
 
 def _noop(*_a) -> None:
@@ -132,7 +133,8 @@ def build_quiz(extracted: dict, total: int, difficulty: str,
 
             for q in raw:
                 # 여러 PDF를 섞으면 청크마다 원본 파일 이름이 다르다
-                vq, why = validate(q, index, chunk.get("source_document", source), chunk["chunk_id"])
+                vq, why = validate(q, index, chunk.get("source_document", source), chunk["chunk_id"],
+                                   difficulty=difficulty)
                 if vq is None:
                     rep.discarded["evidence 원문 불일치"] += 1
                     rep.discard_samples.append(f"[evidence] {why} | {q.question[:40]}")
@@ -209,17 +211,23 @@ def build_quiz(extracted: dict, total: int, difficulty: str,
 def build_mixed(extracted: dict, counts: dict[str, int], difficulty: str, **kw) -> tuple[list[ValidQuestion], BuildReport]:
     """여러 유형을 한 회차로: counts = {"mcq": 3, "short": 2, "essay": 1}.
     객관식 → 단답형 → 서술형 순서로 만들고, 앞에서 만든 문제는 뒤 유형의 중복 검사에 넣는다.
-    보고서는 하나로 합친다 (요청 수·생성 수·폐기 사유 등)."""
+    보고서는 하나로 합친다 (요청 수·생성 수·폐기 사유 등).
+    [추가] '상' 단답형은 '상황 → 현상 이름' 문제만 내므로 재료가 모자랄 수 있다. 모자란 수만큼 객관식으로 채운다
+    (사용자 결정 2026-11-18). 시간 상한에 걸렸으면 채우지 않는다."""
     all_qs: list[ValidQuestion] = []
     total = BuildReport(requested=sum(counts.values()))
     t0 = time.time()
-    for qtype in ("mcq", "short", "essay"):
-        n = counts.get(qtype, 0)
+    plan = [(t, counts.get(t, 0)) for t in ("mcq", "short", "essay")]
+    while plan:
+        qtype, n = plan.pop(0)
         if n <= 0:
             continue
         prev = [{"question": q.question, "choices": q.choices, "evidence": q.evidence,
                  "answer": q.answer_text if q.qtype == "short" else ""} for q in all_qs]
         qs, rep = build_quiz(extracted, n, difficulty, qtype=qtype, extra_prev=prev, **kw)
+        if qtype == "short" and difficulty == "상" and len(qs) < n and not rep.timed_out:
+            total.short_to_mcq = n - len(qs)
+            plan.append(("mcq", n - len(qs)))
         all_qs += qs
         total.generated += rep.generated
         total.discarded.update(rep.discarded)
@@ -237,6 +245,9 @@ def build_mixed(extracted: dict, counts: dict[str, int], difficulty: str, **kw) 
         for c in rep.chunks_used:
             if c not in total.chunks_used:
                 total.chunks_used.append(c)
+    # 대신 낸 객관식도 객관식 자리에 오게 유형 순서로 정렬 (같은 유형 안의 순서는 유지)
+    order = {"mcq": 0, "short": 1, "essay": 2}
+    all_qs.sort(key=lambda q: order.get(q.qtype, 0))
     total.produced = len(all_qs)
     total.seconds = time.time() - t0
     return all_qs, total
