@@ -307,8 +307,9 @@ def view_new() -> None:
     keys = {c["chunk_id"]: chunk_key(c) for c in extracted["chunks"]}
     chunk_doc = {c["chunk_id"]: c["doc_id"] for c in extracted["chunks"]}
     # 대표 PDF(회차 이름 번호 기준) = 문제가 가장 많이 나온 PDF
-    counts = {d: sum(chunk_doc[q.chunk_id] == d for q in qs) for d in doc_ids}
-    ordered = sorted(doc_ids, key=lambda d: -counts[d])
+    # 주의: counts(유형별 요청 수)와 이름이 겹치지 않게 한다 — 겹치면 회차 정보에 PDF 번호가 유형으로 저장됨
+    per_doc = {d: sum(chunk_doc[q.chunk_id] == d for q in qs) for d in doc_ids}
+    ordered = sorted(doc_ids, key=lambda d: -per_doc[d])
     quiz_id = store.create_quiz(
         QuizSession(qs), ordered, diff, int(num), chunk_keys=keys, conditions=conditions,
         doc_of_question=[chunk_doc[q.chunk_id] for q in qs],
@@ -559,7 +560,7 @@ def quiz_info(quiz) -> None:
         if quiz["graded_at"]:
             lines.append(f"- 채점 시각: {time.strftime('%Y-%m-%d %H:%M', time.localtime(quiz['graded_at']))}")
         counts = scope.get("counts") or {}
-        kinds = " · ".join(f"{QTYPE_KO[k]} {v}" for k, v in counts.items() if v)
+        kinds = " · ".join(f"{QTYPE_KO[k]} {v}" for k, v in counts.items() if v and k in QTYPE_KO)
         lines.append(f"- 요청 {quiz['requested']}문제{f' ({kinds})' if kinds else ''} → 출제 {quiz['produced']}문제")
         if quiz["gen_seconds"]:
             lines.append(f"- 생성 시간: {quiz['gen_seconds']:.0f}초 (문제당 {quiz['gen_seconds'] / max(quiz['produced'], 1):.0f}초)")
