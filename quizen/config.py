@@ -19,8 +19,8 @@ OLLAMA_HOST = os.environ.get("QUIZEN_OLLAMA_HOST", _local.get("ollama_host", "ht
 # 화면에서 고를 수 있는 모델 (2026-11-17 같은 조건 비교: qwen 문제당 51초·품질 우선, gemma 35초·메모리 여유)
 # 앱은 마지막으로 고른 모델을 DB(meta 'model')에 기억해 다음 실행 때 config.MODEL로 쓴다.
 MODELS = _local.get("models") or {
-    "qwen3.8:27b": "품질 우선 · 문제당 약 50초 · 상 난이도에 강함",
-    "gemma4:12b": "속도 우선 · 문제당 약 35초 · 메모리 여유",
+    "qwen3.8:27b": "품질 우선 · 상 난이도에 강함",
+    "gemma4:12b": "속도 우선 · 메모리 여유",
 }
 # 환경변수로 지정한 모델은 목록에 없어도 쓰고, 화면에 저장된 선택보다 우선한다.
 MODEL_FROM_ENV = "QUIZEN_MODEL" in os.environ

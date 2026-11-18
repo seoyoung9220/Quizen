@@ -211,7 +211,7 @@ def view_new() -> None:
     model = st.radio("모델", names, index=names.index(config.MODEL) if config.MODEL in names else 0,
                      horizontal=True, format_func=lambda m: m.split(":")[0])
     st.caption(config.MODELS[model] + ("" if model == config.MODEL else
-                                       " · 바꾸면 Mac에서 모델을 다시 올리므로 처음 몇 분은 느릴 수 있습니다."))
+                                       " · 바꾸면 추론 서버가 모델을 새로 불러와서 처음 몇 분은 느릴 수 있습니다."))
 
     page_count = 0
     if up is not None:
