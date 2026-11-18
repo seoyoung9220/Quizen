@@ -1,0 +1,17 @@
+# 강의자료 (저작권) — 절대 올리지 않음
+samples/
+*.pdf
+
+# 내 기록·DB·업로드·측정 결과·토크나이저 사본
+data/
+
+# 내 컴퓨터 전용 설정 (Ollama 주소 등)
+quizen.local.json
+
+# 파이썬·편집기 부산물
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vscode/
+.idea/

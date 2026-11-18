@@ -1,0 +1,39 @@
+/* Quizen 사이드바 트리. 색은 Streamlit 테마 변수를 따라 밝은/어두운 모드에서 모두 맞게 보인다. */
+.qz-root { position: relative; font-size: 14px; color: var(--st-text-color); user-select: none; }
+.qz-head { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 6px; }
+.qz-title { font-weight: 600; font-size: 13px; opacity: .75; }
+.qz-add { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 6px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--st-text-color) 25%, transparent);
+  background: transparent; color: var(--st-text-color); }
+.qz-add:hover { background: var(--st-secondary-background-color); }
+.qz-list { min-height: 40px; padding-bottom: 8px; }
+.qz-row { display: flex; align-items: center; gap: 4px; height: 28px; border-radius: 6px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; }
+.qz-row:hover { background: color-mix(in srgb, var(--st-text-color) 8%, transparent); }
+.qz-selected { background: color-mix(in srgb, var(--st-primary-color) 16%, transparent) !important; }
+.qz-twisty { width: 14px; flex: none; font-size: 9px; line-height: 1; opacity: .55; text-align: center; }
+.qz-icon { flex: none; width: 18px; text-align: center; }
+.qz-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.qz-meta { flex: none; font-size: 11px; opacity: .6; padding-right: 6px; }
+.qz-quiz .qz-label { font-variant-numeric: tabular-nums; }
+.qz-empty { font-size: 12px; opacity: .65; padding: 6px 4px; line-height: 1.5; }
+.qz-rename { flex: 1 1 auto; min-width: 0; font: inherit; padding: 1px 4px; border-radius: 4px;
+  border: 1px solid var(--st-primary-color); background: var(--st-background-color); color: var(--st-text-color); }
+
+.qz-menu, .qz-confirm { position: absolute; z-index: 1000; background: var(--st-background-color);
+  color: var(--st-text-color); border-radius: 8px; padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--st-text-color) 18%, transparent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .18); }
+.qz-menu { min-width: 180px; max-height: 320px; overflow-y: auto; }
+.qz-item { padding: 6px 10px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.qz-item:hover { background: var(--st-secondary-background-color); }
+.qz-danger { color: #d33; }
+.qz-sep { height: 1px; margin: 4px 2px; background: color-mix(in srgb, var(--st-text-color) 15%, transparent); }
+.qz-confirm { left: 0; right: 0; top: 30px; padding: 12px; }
+.qz-confirm-msg { line-height: 1.5; margin-bottom: 10px; white-space: normal; }
+.qz-confirm-btns { display: flex; flex-direction: column; gap: 6px; }
+.qz-btn { font: inherit; padding: 6px 10px; border-radius: 6px; cursor: pointer; text-align: center;
+  border: 1px solid color-mix(in srgb, var(--st-text-color) 25%, transparent);
+  background: transparent; color: var(--st-text-color); }
+.qz-btn:hover { background: var(--st-secondary-background-color); }
+.qz-btn-danger { border-color: #d33; color: #d33; }

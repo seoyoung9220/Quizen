@@ -1,0 +1,14 @@
+# Streamlit 설정 (프로젝트 폴더에서 streamlit run 할 때 자동으로 읽힘)
+
+[client]
+# 오른쪽 위 Deploy 버튼과 영어 더보기(⋮) 메뉴를 숨긴다
+toolbarMode = "minimal"
+
+[server]
+# 이 PC 안에서만 접속되게 한다 (다른 기기·인터넷에서는 열리지 않음)
+address = "127.0.0.1"
+port = 8501
+headless = true
+
+[browser]
+gatherUsageStats = false
