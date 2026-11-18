@@ -367,8 +367,8 @@ def view_solving(quiz) -> None:
             st.rerun()
     elif v["qtype"] == "short":
         key = f"txt_{v['id']}"
-        st.text_input("답 (용어나 짧은 구)", value=v["user_text"] or "", key=key, on_change=_save_text,
-                      args=(v["id"], key), placeholder="예: 경사 하강법")
+        st.text_input("답 (용어 하나, 여러 개면 쉼표로 구분)", value=v["user_text"] or "", key=key,
+                      on_change=_save_text, args=(v["id"], key), placeholder="예: 경사 하강법  /  에포크, 배치")
         st.caption("Enter를 누르거나 다른 곳을 누르면 저장됩니다.")
     else:
         key = f"txt_{v['id']}"

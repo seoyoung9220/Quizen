@@ -90,6 +90,62 @@ def test_short_answer_length():
     assert bad is None and "너무 김" in why, why
 
 
+def test_short_answer_terms_and_comma_list():
+    """사용자 결정(2026-11-18): 단답은 용어 하나, 여러 개면 쉼표로 구분. 문장은 서술형이다."""
+    from quizen.validate import short_is_sentence, split_items
+    assert split_items("에포크, 배치 ,  미니배치") == ["에포크", "배치", "미니배치"]
+    # 실측(상 단답)에서 나온 문장형 정답 → 버림
+    for bad in ["힘들 수 있음", "훈련셋을 반복", "알고리즘이 멈춤 없음", "같은 스케일을 갖는 것"]:
+        assert short_is_sentence(bad), bad
+    for ok in ["특성 수", "볼록 함수", "평가 지표", "오버피팅", "에포크, 확률적 경사 하강법"]:
+        assert not short_is_sentence(ok), ok
+    v, why = validate(GeneratedShort(question="이 문장에 나온 두 용어는?", answer="에포크, 훈련셋", accepted=["epoch"],
+                                     difficulty="하", evidence=EV), IDX, "x", 1)
+    assert v and v.answer_text == "에포크, 훈련셋" and v.accepted == ["epoch"], why
+    bad, why = validate(GeneratedShort(question="?", answer="에포크, 학습률", difficulty="하", evidence=EV), IDX, "x", 1)
+    assert bad is None and "근거 문장에 없음: 학습률" in why, why
+    bad, why = validate(GeneratedShort(question="?", answer="에포크, 에포크", difficulty="하", evidence=EV), IDX, "x", 1)
+    assert bad is None and "겹침" in why, why
+    bad, why = validate(GeneratedShort(question="?", answer="훈련셋을 한번", difficulty="하", evidence=EV), IDX, "x", 1)
+    assert bad is None and "문장" in why, why
+
+
+def test_short_list_grading():
+    """쉼표 목록: 순서 무관, 빠지거나 더 쓰면 오답, 다른 표기는 그 항목 자리에만."""
+    sm = vf.short_matches
+    assert sm("훈련셋, 에포크", "에포크, 훈련셋", [], evidence=EV)
+    assert sm("epoch, 훈련셋", "에포크, 훈련셋", ["epoch"], evidence=EV)
+    assert not sm("에포크", "에포크, 훈련셋", [], evidence=EV)                      # 하나 빠짐
+    assert not sm("에포크, 훈련셋, 학습률", "에포크, 훈련셋", [], evidence=EV)      # 더 씀
+    assert not sm("에포크, epoch", "에포크, 훈련셋", ["epoch"], evidence=EV)       # 같은 항목을 두 번
+    # 검증자가 '와'로 이어 쓴 답은 검증에서만 받아 준다
+    assert sm("에포크와 훈련셋", "에포크, 훈련셋", [], allow_contain=True, evidence=EV)
+    assert not sm("에포크와 훈련셋", "에포크, 훈련셋", [], evidence=EV)
+
+
+def test_telltale_distractor_rejected():
+    """오답 보기에 자료에 없는 단정 표현('자동으로' 등)이 있으면 버린다. 자료에 있는 표현이면 허용."""
+    from quizen.validate import telltale_choice
+    chunk = "[[PAGE 1]]\n경사 하강법 사용 시 반드시 모든 특성이 같은 스케일을 갖도록 해야 함"
+    ch = ["스케일을 맞춘다", "학습률이 자동으로 조정된다", "반드시 같은 스케일이어야 한다는 규칙은 없다", "c"]
+    assert telltale_choice(ch, 0, chunk) == "자동으로"
+    assert telltale_choice(["a", "반드시 b", "c", "d"], 0, chunk) == ""
+    assert telltale_choice(["항상 빠르다", "b", "c", "d"], 0, chunk) == ""     # 정답 보기는 검사하지 않음
+    bad, why = validate(GeneratedQuestion(question="?", choices=["에포크", "학습률이 즉시 바뀜", "c", "d"], answer_index=0,
+                                          difficulty="중", evidence=EV), IDX, "x", 1)
+    assert bad is None and "티 나는 오답" in why, why
+
+
+def test_broken_formula_question_rejected():
+    """실측(2026-11-18): 근거의 수식이 깨져 있는데('𝜃 = 𝑿& - 𝑿 *') 행렬 곱 조합을 묻는 문제 → 버림."""
+    from quizen.validate import leans_on_broken_formula as lb
+    ev = "결과를 바로 얻을 수 있는 수식 (mathematical equation) ;𝜃 = 𝑿& - 𝑿 *"
+    assert lb(ev, "연구자가 직접 수행해야 하는 핵심적인 행렬 연산의 조합은? X의 전치와 X를 곱한 역행렬")
+    assert not lb(ev, "정규 방정식은 반복 없이 결과를 바로 얻는 방법인가?")             # 수식을 묻지 않음
+    assert not lb("비용 함수를 최소화하는 모델 파라미터 𝜽를 찾는 과정", "파라미터를 찾는 행렬 계산은?")  # 문장 속 기호 하나
+    assert not lb("예측 계산 복잡도는 𝑚, 𝑛 에 선형적 증가", "예측 단계에서도 역행렬 계산이 필요한가?")
+
+
 def test_partial_range_answer():
     """실측: 자료 '약 5.3에서 8배'인데 정답 '5.3' → 범위의 한쪽 끝만 쓴 정답은 버린다."""
     from quizen.validate import is_partial_range
@@ -98,6 +154,9 @@ def test_partial_range_answer():
     assert not is_partial_range("1.6cm", "결정 경계는 약 1.6cm 근방에서 만들어짐")
     assert not is_partial_range("GPU", ev)
     assert not is_partial_range("2", "특성이 2개인 경우, 3~5 사이")
+    # 실측(2026-11-18): 숫자 뒤 괄호 설명 때문에 범위인 줄 몰라 '5.3'이 정답으로 통과함
+    ev2 = "특성 수가 2배로 늘어나면 계산 시간은 5.3 (=22.4) 에서 8(=23) 배 증가"
+    assert is_partial_range("5.3", ev2) and is_partial_range("8", ev2) and is_partial_range("8배", ev2)
 
 
 def test_essay_rubric_evidence_checked():

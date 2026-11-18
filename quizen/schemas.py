@@ -42,7 +42,7 @@ class GeneratedBatch(BaseModel):
 # ---------------------------------------------------------------- 단답형
 class GeneratedShort(BaseModel):
     question: str = Field(min_length=1)
-    answer: str = Field(min_length=1, max_length=40)              # 짧은 용어·구
+    answer: str = Field(min_length=1, max_length=100)             # 용어 하나, 여러 개면 쉼표로 구분
     accepted: list[str] = Field(default_factory=list, max_length=5)   # 같은 뜻의 다른 표기 (예: 영문명)
     difficulty: Difficulty
     evidence: str = Field(min_length=1)

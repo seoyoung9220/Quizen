@@ -213,21 +213,82 @@ def _adjacent(text: str, ans: str, alt: str) -> bool:
     return False
 
 
-# 단답 정답은 용어여야 한다. 괄호 속 다른 표기('언더피팅 (과소적합)')는 빼고 센다.
-# (실측: '선형 회귀가 아닌 지역 최소값이 존재하는 비용 함수의 경우' 같은 설명구가 정답으로 나와,
-#  맞게 써도 글자가 조금만 달라지면 틀릴 수 있었다)
+# 단답 정답은 용어 하나다. 답할 것이 여러 개면 용어를 쉼표로 구분한다 (사용자 결정 2026-11-18:
+# "단답형은 한 단어, 여러 개면 콤마로 구분. 문장은 서술형").
+# '경사 하강법'처럼 띄어 쓴 복합 용어는 한 단어로 본다 → 항목당 3어절·20자까지. 괄호 속 다른 표기는 빼고 센다.
+# (실측: '선형 회귀가 아닌 지역 최소값이 존재하는 비용 함수의 경우', '지역 최소값에서 빠져나오기가 더 힘들 수 있음'
+#  같은 설명구·문장이 정답으로 나왔다)
 SHORT_MAX_WORDS = 3
-SHORT_MAX_CHARS = 30
+SHORT_MAX_CHARS = 20
+SHORT_MAX_ITEMS = 4
+_ITEM_SPLIT = re.compile(r"\s*[,，、]\s*")
+# 문장·설명구의 흔적: 서술어로 끝남, 또는 중간 어절이 목적격·부사격 조사로 끝남 ('훈련셋을 반복')
+_SENTENCE_END = re.compile(r"(있음|없음|않음|한다|된다|이다|하다|되다|것|경우|때)$")
+_CLAUSE_PARTICLE = re.compile(r"(을|를|에서|으로)$")
+
+
+def split_items(answer: str) -> list[str]:
+    """단답 정답·학생 답을 쉼표로 나눈다. 빈 항목은 버린다."""
+    return [x.strip() for x in _ITEM_SPLIT.split(answer or "") if x.strip()]
+
+
+def _core(item: str) -> str:
+    return re.sub(r"\([^)]*\)", " ", item).strip()
 
 
 def short_too_long(answer: str) -> bool:
-    core = re.sub(r"\([^)]*\)", " ", answer).strip()
-    return len(core.split()) > SHORT_MAX_WORDS or len(core) > SHORT_MAX_CHARS
+    """항목(쉼표로 나눈 각 용어) 하나라도 용어로 보기에 너무 길면 True."""
+    return any(len(_core(x).split()) > SHORT_MAX_WORDS or len(_core(x)) > SHORT_MAX_CHARS
+               for x in split_items(answer) or [answer])
+
+
+def short_is_sentence(answer: str) -> bool:
+    """항목 하나라도 문장·설명구로 보이면 True ('빠져나오기 힘들 수 있음', '훈련셋을 반복하는 것')."""
+    for x in split_items(answer):
+        words = _core(x).split()
+        if not words:
+            continue
+        if _SENTENCE_END.search(words[-1]) and len(words) > 1:
+            return True
+        if any(_CLAUSE_PARTICLE.search(w) for w in words[:-1]):
+            return True
+    return False
+
+
+# 표현만 봐도 틀린 티가 나는 오답 보기 (C-9 이후 측정: '학습률이 자동으로 조정되어', '항상 빠르다')
+# 자료에 그 표현이 실제로 나오면(예: '반드시 같은 스케일') 자료를 잘못 읽은 그럴듯한 오답일 수 있으므로 허용한다.
+TELLTALE = ("자동으로", "즉시", "항상", "무조건", "절대로", "전혀", "완전히", "반드시")
+
+
+# 근거에 깨진 수식 조각이 있는데 문제가 수식·행렬 계산을 묻는 경우 (실측: 근거 ';𝜃 = 𝑿& - 𝑿 *'로
+# 정규 방정식의 행렬 곱 조합을 묻는 문제 — 자료 글자만으로는 풀 수 없고 바깥 지식이 필요했다).
+# 수학 문자 옆에 연산 기호가 붙어 있으면 깨진 수식 조각으로 본다. 문장 속 기호 하나('파라미터 𝜽를 찾는')는 해당하지 않는다.
+_M = "\U0001D400-\U0001D7FF"
+_BROKEN_FORMULA = re.compile(rf"[{_M}]\s*[=&*^+/]|[=&*^/]\s*[{_M}]")
+FORMULA_WORDS = ("행렬", "전치", "수식", "공식", "계산식")   # '식은'은 '방정식은'에도 걸려서 넣지 않음
+
+
+def leans_on_broken_formula(evidence: str, asked: str) -> bool:
+    return bool(_BROKEN_FORMULA.search(evidence)) and any(w in asked for w in FORMULA_WORDS)
+
+
+def telltale_choice(choices: list[str], answer_index: int, chunk_text: str) -> str:
+    """오답 보기에 자료에 없는 단정 표현이 있으면 그 표현을 돌려준다. 없으면 ''."""
+    src = answer_norm(chunk_text)
+    for i, c in enumerate(choices):
+        if i == answer_index:
+            continue
+        for w in TELLTALE:
+            if w in c and answer_norm(w) not in src:
+                return w
+    return ""
 
 
 # 숫자 정답이 자료에서 범위의 한쪽 끝인 경우 (실측 2번: 자료 '약 5.3에서 8배'인데 정답 '5.3')
-_RANGE_AFTER = r"\s*(에서|부터|~|∼|-|–)\s*\d"
-_RANGE_BEFORE = r"\d\s*(에서|부터|~|∼|-|–)\s*"
+# [추가] 숫자 뒤에 괄호 설명이 끼어 있어도 범위로 본다 (실측: '5.3 (=22.4) 에서 8(=23) 배'에서 정답 '5.3' 통과)
+_PAREN = r"(\s*\([^)]*\))?"
+_RANGE_AFTER = _PAREN + r"\s*(에서|부터|~|∼|-|–)\s*\d"
+_RANGE_BEFORE = r"\d" + _PAREN + r"\s*(에서|부터|~|∼|-|–)\s*"
 
 
 def is_partial_range(answer: str, evidence: str) -> bool:
@@ -253,25 +314,41 @@ def validate(q, index: ChunkIndex, source_document: str,
                 evidence_pages=chk.pages, evidence_mode=chk.mode, source_document=source_document,
                 chunk_id=chunk_id)
 
+    asked = " ".join([q.question, *getattr(q, "choices", []), getattr(q, "answer", ""), getattr(q, "model_answer", "")])
+    if leans_on_broken_formula(q.evidence, asked):
+        return None, "깨진 수식에 기대는 문제 (수식·행렬을 묻는데 근거의 수식이 깨져 있음)"
+
     if isinstance(q, GeneratedQuestion):
+        w = telltale_choice(q.choices, q.answer_index, index.text)
+        if w:
+            return None, f"티 나는 오답 보기('{w}')"
         return ValidQuestion(choices=q.choices, answer_index=q.answer_index, **base), ""
 
     if isinstance(q, GeneratedShort):
+        items = split_items(q.answer)
+        if not 1 <= len(items) <= SHORT_MAX_ITEMS:
+            return None, f"단답 항목 수가 1~{SHORT_MAX_ITEMS}개가 아님: {q.answer}"
         if short_too_long(q.answer):
             return None, f"단답 정답이 너무 김: {q.answer}"
-        ans = answer_norm(q.answer)
-        if len(ans) < 1 or ans not in answer_norm(q.evidence):
-            return None, f"단답 정답이 근거 문장에 없음: {q.answer}"
-        if is_partial_range(q.answer, q.evidence):
-            return None, f"단답 정답이 범위의 한쪽 끝만 씀: {q.answer}"
+        if short_is_sentence(q.answer):
+            return None, f"단답 정답이 용어가 아니라 문장: {q.answer}"
+        norms = [answer_norm(x) for x in items]
+        if len(set(norms)) != len(norms):
+            return None, f"단답 항목이 겹침: {q.answer}"
+        ev_norm = answer_norm(q.evidence)
+        for x, n in zip(items, norms):
+            if len(n) < 1 or n not in ev_norm:
+                return None, f"단답 정답이 근거 문장에 없음: {x}"
+            if is_partial_range(x, q.evidence):
+                return None, f"단답 정답이 범위의 한쪽 끝만 씀: {x}"
         text_norm = answer_norm(index.text)
-        accepted, seen = [], {ans}
+        accepted, seen = [], set(norms)
         for a in q.accepted:
             na = answer_norm(a)
             # 인정 답안 = 같은 말의 다른 표기. 강의자료에서는 "에포크 (epoch)", "확률적 경사 하강법(SGD)"처럼
             # 정답 바로 앞뒤에 붙어 나온다. 자료의 다른 곳에 나오는 말(예: 반대 개념)은 받지 않는다.
             # (실측 버그: 정답 '전체 훈련 세트'의 인정 답안으로 '하나의 샘플'이 들어가 오답이 정답 처리됨)
-            if na and na not in seen and _adjacent(text_norm, ans, na):
+            if na and na not in seen and any(_adjacent(text_norm, n, na) for n in norms):
                 accepted.append(a)
                 seen.add(na)
         return ValidQuestion(choices=[], answer_index=0, qtype="short", answer_text=q.answer,

@@ -233,7 +233,7 @@ class Store:
         - 서술형: 답을 썼으면 모델 채점. 안 쓴 문제는 오답.
         안 푼 문제는 오답. 내가 판정을 바꾼 문제는 그 판정을 유지한다. 모델 채점 결과는 set_auto_grade로 넣는다."""
         from .verify import short_matches
-        rows = self.conn.execute("""SELECT q.id, q.qtype, q.answer_index, q.answer_text, q.accepted,
+        rows = self.conn.execute("""SELECT q.id, q.qtype, q.answer_index, q.answer_text, q.accepted, q.evidence,
                                            a.user_index, a.user_text
                                     FROM questions q LEFT JOIN answers a ON a.question_id=q.id
                                     WHERE q.quiz_id=?""", (quiz_id,)).fetchall()
@@ -246,7 +246,8 @@ class Store:
                     self._set_auto(r["id"], ok, 1.0 if ok else 0.0, {"method": "code"})
                 elif not text:
                     self._set_auto(r["id"], False, 0.0, {"method": "code", "reason": "답을 쓰지 않음"})
-                elif r["qtype"] == "short" and short_matches(text, r["answer_text"], json.loads(r["accepted"])):
+                elif r["qtype"] == "short" and short_matches(text, r["answer_text"], json.loads(r["accepted"]),
+                                                                  evidence=r["evidence"] or ""):
                     self._set_auto(r["id"], True, 1.0, {"method": "code", "reason": "정답과 일치"})
                 else:
                     pending.append(r["id"])
